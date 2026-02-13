@@ -37,7 +37,7 @@ namespace AnyIndicator
 
             followTimer = new System.Windows.Forms.Timer
             {
-                Interval = 16
+                Interval = 10
             };
             followTimer.Tick += FollowTimer_Tick;
             followTimer.Start();
@@ -103,11 +103,11 @@ namespace AnyIndicator
             int x = ledCenter.X - (diameter / 2);
             int y = ledCenter.Y - (diameter / 2);
             Rectangle ledRect = new(x, y, diameter, diameter);
-            Rectangle glowRect = new(x - 4, y - 4, diameter + 8, diameter + 8);
+            Rectangle glowRect = new(x - 3, y - 3, diameter + 6, diameter + 6);
 
             if (isLedOn)
             {
-                using SolidBrush glowBrush = new(Color.FromArgb(95, 0, 140, 255));
+                using SolidBrush glowBrush = new(Color.FromArgb(100, 0, 140, 255));
                 e.Graphics.FillEllipse(glowBrush, glowRect);
             }
 

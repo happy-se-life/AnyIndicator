@@ -1,0 +1,5 @@
+/.vs/
+/bin/
+/obj/
+/temp_build_check/
+*.user

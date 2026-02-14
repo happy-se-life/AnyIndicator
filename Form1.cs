@@ -12,6 +12,12 @@ namespace AnyIndicator
             Yellow,
             Green
         }
+        private enum BlinkSpeedPreset
+        {
+            Slow,
+            Normal,
+            Fast
+        }
 
         private const int WM_NCHITTEST = 0x0084;
         private const int HTTRANSPARENT = -1;
@@ -27,9 +33,17 @@ namespace AnyIndicator
         private readonly System.Windows.Forms.Timer followTimer;
         private readonly NotifyIcon trayIcon;
         private readonly ContextMenuStrip trayMenu;
+        private readonly ToolStripMenuItem blueMenuItem;
+        private readonly ToolStripMenuItem redMenuItem;
+        private readonly ToolStripMenuItem yellowMenuItem;
+        private readonly ToolStripMenuItem greenMenuItem;
+        private readonly ToolStripMenuItem slowSpeedMenuItem;
+        private readonly ToolStripMenuItem normalSpeedMenuItem;
+        private readonly ToolStripMenuItem fastSpeedMenuItem;
         private bool isLedOn = true;
         private Point ledScreenCenter;
         private LedPalette currentPalette = LedPalette.Blue;
+        private BlinkSpeedPreset currentBlinkSpeed = BlinkSpeedPreset.Normal;
 
         public Form1()
         {
@@ -56,10 +70,24 @@ namespace AnyIndicator
             followTimer.Tick += FollowTimer_Tick;
 
             trayMenu = new ContextMenuStrip();
-            trayMenu.Items.Add("青", null, (_, _) => SetLedPalette(LedPalette.Blue));
-            trayMenu.Items.Add("赤", null, (_, _) => SetLedPalette(LedPalette.Red));
-            trayMenu.Items.Add("黄", null, (_, _) => SetLedPalette(LedPalette.Yellow));
-            trayMenu.Items.Add("緑", null, (_, _) => SetLedPalette(LedPalette.Green));
+            blueMenuItem = new ToolStripMenuItem("青", null, (_, _) => SetLedPalette(LedPalette.Blue));
+            redMenuItem = new ToolStripMenuItem("赤", null, (_, _) => SetLedPalette(LedPalette.Red));
+            yellowMenuItem = new ToolStripMenuItem("黄", null, (_, _) => SetLedPalette(LedPalette.Yellow));
+            greenMenuItem = new ToolStripMenuItem("緑", null, (_, _) => SetLedPalette(LedPalette.Green));
+            trayMenu.Items.Add(blueMenuItem);
+            trayMenu.Items.Add(redMenuItem);
+            trayMenu.Items.Add(yellowMenuItem);
+            trayMenu.Items.Add(greenMenuItem);
+            trayMenu.Items.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem speedMenuItem = new("点滅速度");
+            slowSpeedMenuItem = new ToolStripMenuItem("遅い", null, (_, _) => SetBlinkSpeed(BlinkSpeedPreset.Slow));
+            normalSpeedMenuItem = new ToolStripMenuItem("標準", null, (_, _) => SetBlinkSpeed(BlinkSpeedPreset.Normal));
+            fastSpeedMenuItem = new ToolStripMenuItem("速い", null, (_, _) => SetBlinkSpeed(BlinkSpeedPreset.Fast));
+            speedMenuItem.DropDownItems.Add(slowSpeedMenuItem);
+            speedMenuItem.DropDownItems.Add(normalSpeedMenuItem);
+            speedMenuItem.DropDownItems.Add(fastSpeedMenuItem);
+            trayMenu.Items.Add(speedMenuItem);
             trayMenu.Items.Add(new ToolStripSeparator());
             trayMenu.Items.Add("終了", null, (_, _) => Application.Exit());
 
@@ -136,22 +164,27 @@ namespace AnyIndicator
             RenderLedOverlay();
         }
 
+        private void SetBlinkSpeed(BlinkSpeedPreset speed)
+        {
+            currentBlinkSpeed = speed;
+            blinkTimer.Interval = speed switch
+            {
+                BlinkSpeedPreset.Slow => 800,
+                BlinkSpeedPreset.Fast => 200,
+                _ => 450
+            };
+            UpdateTrayMenuChecks();
+        }
+
         private void UpdateTrayMenuChecks()
         {
-            foreach (ToolStripItem item in trayMenu.Items)
-            {
-                if (item is ToolStripMenuItem menuItem)
-                {
-                    menuItem.Checked = menuItem.Text switch
-                    {
-                        "青" => currentPalette == LedPalette.Blue,
-                        "赤" => currentPalette == LedPalette.Red,
-                        "黄" => currentPalette == LedPalette.Yellow,
-                        "緑" => currentPalette == LedPalette.Green,
-                        _ => false
-                    };
-                }
-            }
+            blueMenuItem.Checked = currentPalette == LedPalette.Blue;
+            redMenuItem.Checked = currentPalette == LedPalette.Red;
+            yellowMenuItem.Checked = currentPalette == LedPalette.Yellow;
+            greenMenuItem.Checked = currentPalette == LedPalette.Green;
+            slowSpeedMenuItem.Checked = currentBlinkSpeed == BlinkSpeedPreset.Slow;
+            normalSpeedMenuItem.Checked = currentBlinkSpeed == BlinkSpeedPreset.Normal;
+            fastSpeedMenuItem.Checked = currentBlinkSpeed == BlinkSpeedPreset.Fast;
         }
 
         private void RenderLedOverlay()

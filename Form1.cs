@@ -1,18 +1,35 @@
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+
 namespace AnyIndicator
 {
     public partial class Form1 : Form
     {
+        private enum LedPalette
+        {
+            Blue,
+            Red,
+            Yellow,
+            Green
+        }
+
         private const int WM_NCHITTEST = 0x0084;
         private const int HTTRANSPARENT = -1;
         private const int WS_EX_TRANSPARENT = 0x00000020;
         private const int WS_EX_LAYERED = 0x00080000;
         private const int WS_EX_NOACTIVATE = 0x08000000;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
+        private const int ULW_ALPHA = 0x00000002;
+        private const byte AC_SRC_OVER = 0x00;
+        private const byte AC_SRC_ALPHA = 0x01;
 
         private readonly System.Windows.Forms.Timer blinkTimer;
         private readonly System.Windows.Forms.Timer followTimer;
+        private readonly NotifyIcon trayIcon;
+        private readonly ContextMenuStrip trayMenu;
         private bool isLedOn = true;
-        private Point ledCenter;
+        private Point ledScreenCenter;
+        private LedPalette currentPalette = LedPalette.Blue;
 
         public Form1()
         {
@@ -20,37 +37,57 @@ namespace AnyIndicator
 
             Text = string.Empty;
             FormBorderStyle = FormBorderStyle.None;
-            BackColor = Color.Magenta;
-            TransparencyKey = Color.Magenta;
-            DoubleBuffered = true;
-            StartPosition = FormStartPosition.Manual;
-            Bounds = SystemInformation.VirtualScreen;
-            TopMost = true;
             ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            TopMost = true;
+            Size = new Size(1, 1);
+            Location = new Point(-32000, -32000);
 
             blinkTimer = new System.Windows.Forms.Timer
             {
                 Interval = 450
             };
             blinkTimer.Tick += BlinkTimer_Tick;
-            blinkTimer.Start();
 
             followTimer = new System.Windows.Forms.Timer
             {
                 Interval = 10
             };
             followTimer.Tick += FollowTimer_Tick;
-            followTimer.Start();
 
-            ledCenter = new Point(ClientSize.Width / 2, ClientSize.Height / 2);
+            trayMenu = new ContextMenuStrip();
+            trayMenu.Items.Add("青", null, (_, _) => SetLedPalette(LedPalette.Blue));
+            trayMenu.Items.Add("赤", null, (_, _) => SetLedPalette(LedPalette.Red));
+            trayMenu.Items.Add("黄", null, (_, _) => SetLedPalette(LedPalette.Yellow));
+            trayMenu.Items.Add("緑", null, (_, _) => SetLedPalette(LedPalette.Green));
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add("終了", null, (_, _) => Application.Exit());
+
+            trayIcon = new NotifyIcon
+            {
+                Icon = SystemIcons.Information,
+                Text = "AnyIndicator - 色を選択",
+                ContextMenuStrip = trayMenu,
+                Visible = true
+            };
+            UpdateTrayMenuChecks();
+
+            ledScreenCenter = Cursor.Position;
+            Shown += (_, _) =>
+            {
+                blinkTimer.Start();
+                followTimer.Start();
+                RenderLedOverlay();
+            };
 
             FormClosed += (_, _) =>
             {
                 blinkTimer.Dispose();
                 followTimer.Dispose();
+                trayIcon.Visible = false;
+                trayIcon.Dispose();
+                trayMenu.Dispose();
             };
-            Resize += (_, _) => Invalidate();
-            Paint += Form1_Paint;
         }
 
         protected override bool ShowWithoutActivation => true;
@@ -79,51 +116,223 @@ namespace AnyIndicator
         private void BlinkTimer_Tick(object? sender, EventArgs e)
         {
             isLedOn = !isLedOn;
-            Invalidate();
+            RenderLedOverlay();
         }
 
         private void FollowTimer_Tick(object? sender, EventArgs e)
         {
-            Point cursorInClient = PointToClient(Cursor.Position);
-            Point newCenter = new(cursorInClient.X, cursorInClient.Y);
-
-            if (newCenter != ledCenter)
+            Point cursorPos = Cursor.Position;
+            if (cursorPos != ledScreenCenter)
             {
-                ledCenter = newCenter;
-                Invalidate();
+                ledScreenCenter = cursorPos;
+                RenderLedOverlay();
             }
         }
 
-        private void Form1_Paint(object? sender, PaintEventArgs e)
+        private void SetLedPalette(LedPalette palette)
         {
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            currentPalette = palette;
+            UpdateTrayMenuChecks();
+            RenderLedOverlay();
+        }
+
+        private void UpdateTrayMenuChecks()
+        {
+            foreach (ToolStripItem item in trayMenu.Items)
+            {
+                if (item is ToolStripMenuItem menuItem)
+                {
+                    menuItem.Checked = menuItem.Text switch
+                    {
+                        "青" => currentPalette == LedPalette.Blue,
+                        "赤" => currentPalette == LedPalette.Red,
+                        "黄" => currentPalette == LedPalette.Yellow,
+                        "緑" => currentPalette == LedPalette.Green,
+                        _ => false
+                    };
+                }
+            }
+        }
+
+        private void RenderLedOverlay()
+        {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
 
             const int diameter = 10;
             const int ringPadding = 1;
-            int x = ledCenter.X - (diameter / 2);
-            int y = ledCenter.Y - (diameter / 2);
-            Rectangle ledRect = new(x, y, diameter, diameter);
-            Rectangle glowRect = new(x - 3, y - 3, diameter + 6, diameter + 6);
+            const int glowPadding = 3;
+            int overlaySize = diameter + (glowPadding * 2);
+            int x = glowPadding;
+            int y = glowPadding;
 
-            if (isLedOn)
+            Rectangle ledRect = new(x, y, diameter, diameter);
+            Rectangle glowRect = new(0, 0, overlaySize, overlaySize);
+
+            (Color onColor, Color offColor) = currentPalette switch
             {
-                using SolidBrush glowBrush = new(Color.FromArgb(100, 0, 140, 255));
-                e.Graphics.FillEllipse(glowBrush, glowRect);
+                LedPalette.Red => (
+                    Color.FromArgb(255, 60, 40),
+                    Color.FromArgb(50, 85, 30, 25)
+                ),
+                LedPalette.Yellow => (
+                    Color.FromArgb(255, 215, 40),
+                    Color.FromArgb(50, 95, 80, 25)
+                ),
+                LedPalette.Green => (
+                    Color.FromArgb(60, 220, 90),
+                    Color.FromArgb(50, 25, 75, 35)
+                ),
+                _ => (
+                    Color.FromArgb(0, 120, 255),
+                    Color.FromArgb(50, 25, 45, 85)
+                )
+            };
+
+            Color glowColor = Color.FromArgb(100, onColor.R, onColor.G, onColor.B);
+            Color ringColor = Color.FromArgb(
+                255,
+                Math.Min(255, onColor.R + 80),
+                Math.Min(255, onColor.G + 80),
+                Math.Min(255, onColor.B + 80)
+            );
+            Color ledColor = isLedOn ? onColor : offColor;
+
+            using Bitmap bitmap = new(overlaySize, overlaySize, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bitmap))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+
+                if (isLedOn)
+                {
+                    using SolidBrush glowBrush = new(glowColor);
+                    g.FillEllipse(glowBrush, glowRect);
+                }
+
+                using SolidBrush ledBrush = new(ledColor);
+                g.FillEllipse(ledBrush, ledRect);
+
+                using Pen ringPen = new(ringColor, ringPadding);
+                g.DrawEllipse(ringPen, ledRect);
+
+                if (isLedOn)
+                {
+                    Rectangle highlightRect = new(x + 2, y + 1, 3, 2);
+                    using SolidBrush highlightBrush = new(Color.FromArgb(150, 255, 255, 255));
+                    g.FillEllipse(highlightBrush, highlightRect);
+                }
             }
 
-            Color ledColor = isLedOn ? Color.FromArgb(0, 120, 255) : Color.FromArgb(25, 45, 85);
-            using SolidBrush ledBrush = new(ledColor);
-            e.Graphics.FillEllipse(ledBrush, ledRect);
+            Point topLeft = new(ledScreenCenter.X - (overlaySize / 2), ledScreenCenter.Y - (overlaySize / 2));
+            UpdateLayeredBitmap(bitmap, topLeft);
+        }
 
-            using Pen ringPen = new(Color.FromArgb(160, 220, 255), ringPadding);
-            e.Graphics.DrawEllipse(ringPen, ledRect);
+        private void UpdateLayeredBitmap(Bitmap bitmap, Point topLeft)
+        {
+            IntPtr screenDc = GetDC(IntPtr.Zero);
+            IntPtr memDc = CreateCompatibleDC(screenDc);
+            IntPtr hBitmap = bitmap.GetHbitmap(Color.FromArgb(0));
+            IntPtr oldBitmap = SelectObject(memDc, hBitmap);
 
-            if (isLedOn)
+            try
             {
-                Rectangle highlightRect = new(x + 2, y + 1, 3, 2);
-                using SolidBrush highlightBrush = new(Color.FromArgb(150, 255, 255, 255));
-                e.Graphics.FillEllipse(highlightBrush, highlightRect);
+                SIZE size = new(bitmap.Width, bitmap.Height);
+                POINT sourcePoint = new(0, 0);
+                POINT topPos = new(topLeft.X, topLeft.Y);
+                BLENDFUNCTION blend = new()
+                {
+                    BlendOp = AC_SRC_OVER,
+                    BlendFlags = 0,
+                    SourceConstantAlpha = 255,
+                    AlphaFormat = AC_SRC_ALPHA
+                };
+
+                UpdateLayeredWindow(
+                    Handle,
+                    screenDc,
+                    ref topPos,
+                    ref size,
+                    memDc,
+                    ref sourcePoint,
+                    0,
+                    ref blend,
+                    ULW_ALPHA);
+            }
+            finally
+            {
+                SelectObject(memDc, oldBitmap);
+                DeleteObject(hBitmap);
+                DeleteDC(memDc);
+                ReleaseDC(IntPtr.Zero, screenDc);
             }
         }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int X;
+            public int Y;
+
+            public POINT(int x, int y)
+            {
+                X = x;
+                Y = y;
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SIZE
+        {
+            public int CX;
+            public int CY;
+
+            public SIZE(int cx, int cy)
+            {
+                CX = cx;
+                CY = cy;
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct BLENDFUNCTION
+        {
+            public byte BlendOp;
+            public byte BlendFlags;
+            public byte SourceConstantAlpha;
+            public byte AlphaFormat;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool UpdateLayeredWindow(
+            IntPtr hWnd,
+            IntPtr hdcDst,
+            ref POINT pptDst,
+            ref SIZE psize,
+            IntPtr hdcSrc,
+            ref POINT pptSrc,
+            int crKey,
+            ref BLENDFUNCTION pblend,
+            int dwFlags);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr GetDC(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        private static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        private static extern bool DeleteDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        private static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        private static extern bool DeleteObject(IntPtr ho);
     }
 }

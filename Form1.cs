@@ -87,10 +87,13 @@ namespace AnyIndicator
             redMenuItem = new ToolStripMenuItem("赤", null, (_, _) => SetLedPalette(LedPalette.Red));
             yellowMenuItem = new ToolStripMenuItem("黄", null, (_, _) => SetLedPalette(LedPalette.Yellow));
             greenMenuItem = new ToolStripMenuItem("緑", null, (_, _) => SetLedPalette(LedPalette.Green));
-            trayMenu.Items.Add(blueMenuItem);
-            trayMenu.Items.Add(redMenuItem);
-            trayMenu.Items.Add(yellowMenuItem);
-            trayMenu.Items.Add(greenMenuItem);
+
+            ToolStripMenuItem colorMenuItem = new("色");
+            colorMenuItem.DropDownItems.Add(blueMenuItem);
+            colorMenuItem.DropDownItems.Add(redMenuItem);
+            colorMenuItem.DropDownItems.Add(yellowMenuItem);
+            colorMenuItem.DropDownItems.Add(greenMenuItem);
+            trayMenu.Items.Add(colorMenuItem);
             trayMenu.Items.Add(new ToolStripSeparator());
 
             ToolStripMenuItem speedMenuItem = new("点滅速度");

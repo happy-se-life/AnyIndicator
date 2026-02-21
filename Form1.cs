@@ -18,6 +18,11 @@ namespace AnyIndicator
             Normal,
             Fast
         }
+        private enum CaptureAreaPreset
+        {
+            Size12,
+            Size24
+        }
 
         private const int WM_NCHITTEST = 0x0084;
         private const int HTTRANSPARENT = -1;
@@ -29,7 +34,6 @@ namespace AnyIndicator
         private const byte AC_SRC_OVER = 0x00;
         private const byte AC_SRC_ALPHA = 0x01;
         private const int VK_LBUTTON = 0x01;
-        private const int CaptureSize = 10;
         private const int CaptureDelayMs = 2000;
         private const int CompareIntervalMs = 120;
 
@@ -44,6 +48,8 @@ namespace AnyIndicator
         private readonly ToolStripMenuItem slowSpeedMenuItem;
         private readonly ToolStripMenuItem normalSpeedMenuItem;
         private readonly ToolStripMenuItem fastSpeedMenuItem;
+        private readonly ToolStripMenuItem captureSize12MenuItem;
+        private readonly ToolStripMenuItem captureSize24MenuItem;
         private bool isLedOn = true;
         private bool showLed;
         private bool isCaptureMode;
@@ -52,6 +58,7 @@ namespace AnyIndicator
         private Point ledScreenCenter;
         private LedPalette currentPalette = LedPalette.Blue;
         private BlinkSpeedPreset currentBlinkSpeed = BlinkSpeedPreset.Normal;
+        private CaptureAreaPreset currentCaptureArea = CaptureAreaPreset.Size12;
         private Point watchedScreenPoint;
         private Point pendingCapturePoint;
         private Bitmap? baselineCapture;
@@ -105,6 +112,15 @@ namespace AnyIndicator
             speedMenuItem.DropDownItems.Add(fastSpeedMenuItem);
             trayMenu.Items.Add(speedMenuItem);
             trayMenu.Items.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem captureSizeMenuItem = new("キャプチャ領域");
+            captureSize12MenuItem = new ToolStripMenuItem("12x12", null, (_, _) => SetCaptureArea(CaptureAreaPreset.Size12));
+            captureSize24MenuItem = new ToolStripMenuItem("24x24", null, (_, _) => SetCaptureArea(CaptureAreaPreset.Size24));
+            captureSizeMenuItem.DropDownItems.Add(captureSize12MenuItem);
+            captureSizeMenuItem.DropDownItems.Add(captureSize24MenuItem);
+            trayMenu.Items.Add(captureSizeMenuItem);
+            trayMenu.Items.Add(new ToolStripSeparator());
+
             trayMenu.Items.Add("キャプチャ", null, (_, _) => StartCaptureMode());
             trayMenu.Items.Add("終了", null, (_, _) => Application.Exit());
 
@@ -284,22 +300,28 @@ namespace AnyIndicator
             return true;
         }
 
-        private static Bitmap CaptureAreaAround(Point center)
+        private Bitmap CaptureAreaAround(Point center)
         {
+            int captureSize = GetCaptureSize();
             Rectangle virtualScreen = SystemInformation.VirtualScreen;
-            int left = center.X - (CaptureSize / 2);
-            int top = center.Y - (CaptureSize / 2);
+            int left = center.X - (captureSize / 2);
+            int top = center.Y - (captureSize / 2);
 
-            left = Math.Clamp(left, virtualScreen.Left, virtualScreen.Right - CaptureSize);
-            top = Math.Clamp(top, virtualScreen.Top, virtualScreen.Bottom - CaptureSize);
+            left = Math.Clamp(left, virtualScreen.Left, virtualScreen.Right - captureSize);
+            top = Math.Clamp(top, virtualScreen.Top, virtualScreen.Bottom - captureSize);
 
-            using Bitmap source = new(CaptureSize, CaptureSize, PixelFormat.Format32bppArgb);
+            using Bitmap source = new(captureSize, captureSize, PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(source))
             {
-                g.CopyFromScreen(left, top, 0, 0, new Size(CaptureSize, CaptureSize), CopyPixelOperation.SourceCopy);
+                g.CopyFromScreen(left, top, 0, 0, new Size(captureSize, captureSize), CopyPixelOperation.SourceCopy);
             }
 
             return (Bitmap)source.Clone();
+        }
+
+        private int GetCaptureSize()
+        {
+            return currentCaptureArea == CaptureAreaPreset.Size24 ? 24 : 12;
         }
 
         private void SetLedPalette(LedPalette palette)
@@ -321,6 +343,16 @@ namespace AnyIndicator
             UpdateTrayMenuChecks();
         }
 
+        private void SetCaptureArea(CaptureAreaPreset preset)
+        {
+            currentCaptureArea = preset;
+            baselineCapture?.Dispose();
+            baselineCapture = null;
+            showLed = false;
+            RenderLedOverlay();
+            UpdateTrayMenuChecks();
+        }
+
         private void UpdateTrayMenuChecks()
         {
             blueMenuItem.Checked = currentPalette == LedPalette.Blue;
@@ -330,6 +362,8 @@ namespace AnyIndicator
             slowSpeedMenuItem.Checked = currentBlinkSpeed == BlinkSpeedPreset.Slow;
             normalSpeedMenuItem.Checked = currentBlinkSpeed == BlinkSpeedPreset.Normal;
             fastSpeedMenuItem.Checked = currentBlinkSpeed == BlinkSpeedPreset.Fast;
+            captureSize12MenuItem.Checked = currentCaptureArea == CaptureAreaPreset.Size12;
+            captureSize24MenuItem.Checked = currentCaptureArea == CaptureAreaPreset.Size24;
         }
 
         private void RenderLedOverlay()
@@ -468,7 +502,7 @@ namespace AnyIndicator
                 StartPosition = FormStartPosition.Manual;
                 ShowInTaskbar = false;
                 TopMost = true;
-                Text = "Capture 10x10";
+                Text = $"Capture {sourceBitmap.Width}x{sourceBitmap.Height}";
                 ClientSize = new Size(120, 120);
 
                 int offset = 16;

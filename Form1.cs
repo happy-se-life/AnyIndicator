@@ -1,5 +1,6 @@
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace AnyIndicator
 {
@@ -59,6 +60,8 @@ namespace AnyIndicator
         private readonly ToolStripMenuItem ledSizeSmallMenuItem;
         private readonly ToolStripMenuItem ledSizeMediumMenuItem;
         private readonly ToolStripMenuItem ledSizeLargeMenuItem;
+        private readonly string stateFilePath;
+        private readonly string baselineImagePath;
         private bool isLedOn = true;
         private bool showLed;
         private bool isCaptureMode;
@@ -78,6 +81,9 @@ namespace AnyIndicator
         public Form1()
         {
             InitializeComponent();
+
+            stateFilePath = Path.Combine(Application.UserAppDataPath, "app-state.json");
+            baselineImagePath = Path.Combine(Application.UserAppDataPath, "baseline-capture.png");
 
             Text = string.Empty;
             FormBorderStyle = FormBorderStyle.None;
@@ -151,6 +157,9 @@ namespace AnyIndicator
                 ContextMenuStrip = trayMenu,
                 Visible = true
             };
+
+            LoadAppState();
+            ApplyBlinkSpeedInterval();
             UpdateTrayMenuChecks();
 
             ledScreenCenter = Cursor.Position;
@@ -163,6 +172,7 @@ namespace AnyIndicator
 
             FormClosed += (_, _) =>
             {
+                SaveAppState();
                 blinkTimer.Dispose();
                 monitorTimer.Dispose();
                 trayIcon.Visible = false;
@@ -280,6 +290,7 @@ namespace AnyIndicator
             watchedScreenPoint = clickPoint;
             showLed = false;
             RenderLedOverlay();
+            SaveAppState();
         }
 
         private static void ShowCapturePreview(Bitmap capture, Point clickPoint)
@@ -349,18 +360,15 @@ namespace AnyIndicator
             currentPalette = palette;
             UpdateTrayMenuChecks();
             RenderLedOverlay();
+            SaveAppState();
         }
 
         private void SetBlinkSpeed(BlinkSpeedPreset speed)
         {
             currentBlinkSpeed = speed;
-            blinkTimer.Interval = speed switch
-            {
-                BlinkSpeedPreset.Slow => 800,
-                BlinkSpeedPreset.Fast => 200,
-                _ => 450
-            };
+            ApplyBlinkSpeedInterval();
             UpdateTrayMenuChecks();
+            SaveAppState();
         }
 
         private void SetCaptureArea(CaptureAreaPreset preset)
@@ -371,6 +379,7 @@ namespace AnyIndicator
             showLed = false;
             RenderLedOverlay();
             UpdateTrayMenuChecks();
+            SaveAppState();
         }
 
         private void SetLedSize(LedSizePreset preset)
@@ -378,6 +387,104 @@ namespace AnyIndicator
             currentLedSize = preset;
             UpdateTrayMenuChecks();
             RenderLedOverlay();
+            SaveAppState();
+        }
+
+        private void ApplyBlinkSpeedInterval()
+        {
+            blinkTimer.Interval = currentBlinkSpeed switch
+            {
+                BlinkSpeedPreset.Slow => 800,
+                BlinkSpeedPreset.Fast => 200,
+                _ => 450
+            };
+        }
+
+        private void LoadAppState()
+        {
+            try
+            {
+                if (!File.Exists(stateFilePath))
+                {
+                    return;
+                }
+
+                string json = File.ReadAllText(stateFilePath);
+                PersistedState? state = JsonSerializer.Deserialize<PersistedState>(json);
+                if (state is null)
+                {
+                    return;
+                }
+
+                if (Enum.TryParse(state.Palette, out LedPalette palette))
+                {
+                    currentPalette = palette;
+                }
+
+                if (Enum.TryParse(state.BlinkSpeed, out BlinkSpeedPreset blinkSpeed))
+                {
+                    currentBlinkSpeed = blinkSpeed;
+                }
+
+                if (Enum.TryParse(state.CaptureArea, out CaptureAreaPreset captureArea))
+                {
+                    currentCaptureArea = captureArea;
+                }
+
+                if (Enum.TryParse(state.LedSize, out LedSizePreset ledSize))
+                {
+                    currentLedSize = ledSize;
+                }
+
+                if (state.HasBaselineCapture && File.Exists(baselineImagePath))
+                {
+                    using Image image = Image.FromFile(baselineImagePath);
+                    baselineCapture?.Dispose();
+                    baselineCapture = new Bitmap(image);
+                    watchedScreenPoint = new Point(state.WatchedX, state.WatchedY);
+                }
+            }
+            catch
+            {
+                // 読み込み失敗時はデフォルト設定で起動する
+            }
+        }
+
+        private void SaveAppState()
+        {
+            try
+            {
+                Directory.CreateDirectory(Application.UserAppDataPath);
+                if (baselineCapture is not null)
+                {
+                    baselineCapture.Save(baselineImagePath, ImageFormat.Png);
+                }
+                else if (File.Exists(baselineImagePath))
+                {
+                    File.Delete(baselineImagePath);
+                }
+
+                PersistedState state = new()
+                {
+                    Palette = currentPalette.ToString(),
+                    BlinkSpeed = currentBlinkSpeed.ToString(),
+                    CaptureArea = currentCaptureArea.ToString(),
+                    LedSize = currentLedSize.ToString(),
+                    WatchedX = watchedScreenPoint.X,
+                    WatchedY = watchedScreenPoint.Y,
+                    HasBaselineCapture = baselineCapture is not null
+                };
+
+                string json = JsonSerializer.Serialize(state, new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+                File.WriteAllText(stateFilePath, json);
+            }
+            catch
+            {
+                // 保存失敗時もアプリ本体の動作は継続する
+            }
         }
 
         private void UpdateTrayMenuChecks()
@@ -578,6 +685,17 @@ namespace AnyIndicator
                 using Pen border = new(Color.White);
                 e.Graphics.DrawRectangle(border, targetRect);
             }
+        }
+
+        private sealed class PersistedState
+        {
+            public string Palette { get; set; } = LedPalette.Blue.ToString();
+            public string BlinkSpeed { get; set; } = BlinkSpeedPreset.Normal.ToString();
+            public string CaptureArea { get; set; } = CaptureAreaPreset.Size12.ToString();
+            public string LedSize { get; set; } = LedSizePreset.Medium.ToString();
+            public int WatchedX { get; set; }
+            public int WatchedY { get; set; }
+            public bool HasBaselineCapture { get; set; }
         }
 
         [StructLayout(LayoutKind.Sequential)]

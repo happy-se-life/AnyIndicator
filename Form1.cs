@@ -23,6 +23,12 @@ namespace AnyIndicator
             Size12,
             Size24
         }
+        private enum LedSizePreset
+        {
+            Small,
+            Medium,
+            Large
+        }
 
         private const int WM_NCHITTEST = 0x0084;
         private const int HTTRANSPARENT = -1;
@@ -50,6 +56,9 @@ namespace AnyIndicator
         private readonly ToolStripMenuItem fastSpeedMenuItem;
         private readonly ToolStripMenuItem captureSize12MenuItem;
         private readonly ToolStripMenuItem captureSize24MenuItem;
+        private readonly ToolStripMenuItem ledSizeSmallMenuItem;
+        private readonly ToolStripMenuItem ledSizeMediumMenuItem;
+        private readonly ToolStripMenuItem ledSizeLargeMenuItem;
         private bool isLedOn = true;
         private bool showLed;
         private bool isCaptureMode;
@@ -59,6 +68,7 @@ namespace AnyIndicator
         private LedPalette currentPalette = LedPalette.Blue;
         private BlinkSpeedPreset currentBlinkSpeed = BlinkSpeedPreset.Normal;
         private CaptureAreaPreset currentCaptureArea = CaptureAreaPreset.Size12;
+        private LedSizePreset currentLedSize = LedSizePreset.Medium;
         private Point watchedScreenPoint;
         private Point pendingCapturePoint;
         private Bitmap? baselineCapture;
@@ -111,6 +121,16 @@ namespace AnyIndicator
             speedMenuItem.DropDownItems.Add(normalSpeedMenuItem);
             speedMenuItem.DropDownItems.Add(fastSpeedMenuItem);
             trayMenu.Items.Add(speedMenuItem);
+            trayMenu.Items.Add(new ToolStripSeparator());
+
+            ToolStripMenuItem ledSizeMenuItem = new("LEDサイズ");
+            ledSizeSmallMenuItem = new ToolStripMenuItem("小", null, (_, _) => SetLedSize(LedSizePreset.Small));
+            ledSizeMediumMenuItem = new ToolStripMenuItem("中", null, (_, _) => SetLedSize(LedSizePreset.Medium));
+            ledSizeLargeMenuItem = new ToolStripMenuItem("大", null, (_, _) => SetLedSize(LedSizePreset.Large));
+            ledSizeMenuItem.DropDownItems.Add(ledSizeLargeMenuItem);
+            ledSizeMenuItem.DropDownItems.Add(ledSizeMediumMenuItem);
+            ledSizeMenuItem.DropDownItems.Add(ledSizeSmallMenuItem);
+            trayMenu.Items.Add(ledSizeMenuItem);
             trayMenu.Items.Add(new ToolStripSeparator());
 
             ToolStripMenuItem captureSizeMenuItem = new("キャプチャ領域");
@@ -353,6 +373,13 @@ namespace AnyIndicator
             UpdateTrayMenuChecks();
         }
 
+        private void SetLedSize(LedSizePreset preset)
+        {
+            currentLedSize = preset;
+            UpdateTrayMenuChecks();
+            RenderLedOverlay();
+        }
+
         private void UpdateTrayMenuChecks()
         {
             blueMenuItem.Checked = currentPalette == LedPalette.Blue;
@@ -362,6 +389,9 @@ namespace AnyIndicator
             slowSpeedMenuItem.Checked = currentBlinkSpeed == BlinkSpeedPreset.Slow;
             normalSpeedMenuItem.Checked = currentBlinkSpeed == BlinkSpeedPreset.Normal;
             fastSpeedMenuItem.Checked = currentBlinkSpeed == BlinkSpeedPreset.Fast;
+            ledSizeSmallMenuItem.Checked = currentLedSize == LedSizePreset.Small;
+            ledSizeMediumMenuItem.Checked = currentLedSize == LedSizePreset.Medium;
+            ledSizeLargeMenuItem.Checked = currentLedSize == LedSizePreset.Large;
             captureSize12MenuItem.Checked = currentCaptureArea == CaptureAreaPreset.Size12;
             captureSize24MenuItem.Checked = currentCaptureArea == CaptureAreaPreset.Size24;
         }
@@ -381,9 +411,19 @@ namespace AnyIndicator
                 return;
             }
 
-            const int diameter = 10;
-            const int ringPadding = 1;
-            const int glowPadding = 3;
+            int diameter = currentLedSize switch
+            {
+                LedSizePreset.Small => 8,
+                LedSizePreset.Large => 14,
+                _ => 10
+            };
+            int ringPadding = currentLedSize == LedSizePreset.Large ? 2 : 1;
+            int glowPadding = currentLedSize switch
+            {
+                LedSizePreset.Small => 2,
+                LedSizePreset.Large => 4,
+                _ => 3
+            };
             int overlaySize = diameter + (glowPadding * 2);
             int x = glowPadding;
             int y = glowPadding;
@@ -440,7 +480,9 @@ namespace AnyIndicator
 
                 if (isLedOn)
                 {
-                    Rectangle highlightRect = new(x + 2, y + 1, 3, 2);
+                    int highlightWidth = Math.Max(2, diameter / 3);
+                    int highlightHeight = Math.Max(1, diameter / 4);
+                    Rectangle highlightRect = new(x + 2, y + 1, highlightWidth, highlightHeight);
                     using SolidBrush highlightBrush = new(Color.FromArgb(150, 255, 255, 255));
                     g.FillEllipse(highlightBrush, highlightRect);
                 }

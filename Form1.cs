@@ -179,7 +179,6 @@ namespace AnyIndicator
                 isCapturePending = true;
                 pendingCapturePoint = cursorPos;
                 pendingCaptureDueMs = Environment.TickCount64 + CaptureDelayMs;
-                trayIcon.ShowBalloonTip(1200, "キャプチャ待機", "2秒後に基準画像を保存します。", ToolTipIcon.Info);
             }
 
             lastLeftButtonDown = isLeftButtonDown;
@@ -189,7 +188,10 @@ namespace AnyIndicator
             {
                 SaveBaselineCapture(pendingCapturePoint);
                 isCapturePending = false;
-                trayIcon.ShowBalloonTip(1000, "キャプチャ完了", "監視を開始しました。", ToolTipIcon.Info);
+                if (baselineCapture is not null)
+                {
+                    ShowCapturePreview(baselineCapture, pendingCapturePoint);
+                }
             }
 
             if (baselineCapture is null || isCaptureMode || isCapturePending)
@@ -233,7 +235,6 @@ namespace AnyIndicator
             isCapturePending = false;
             showLed = false;
             RenderLedOverlay();
-            trayIcon.ShowBalloonTip(1500, "キャプチャモード", "監視したい場所を左クリックしてください（2秒後に保存）。", ToolTipIcon.Info);
         }
 
         private void SaveBaselineCapture(Point clickPoint)
@@ -243,6 +244,12 @@ namespace AnyIndicator
             watchedScreenPoint = clickPoint;
             showLed = false;
             RenderLedOverlay();
+        }
+
+        private static void ShowCapturePreview(Bitmap capture, Point clickPoint)
+        {
+            CapturePreviewForm previewForm = new((Bitmap)capture.Clone(), clickPoint);
+            previewForm.Show();
         }
 
         private bool HasScreenChanged()
@@ -446,6 +453,54 @@ namespace AnyIndicator
                 DeleteObject(hBitmap);
                 DeleteDC(memDc);
                 ReleaseDC(IntPtr.Zero, screenDc);
+            }
+        }
+
+        private sealed class CapturePreviewForm : Form
+        {
+            private readonly Bitmap previewBitmap;
+            private readonly System.Windows.Forms.Timer closeTimer;
+
+            public CapturePreviewForm(Bitmap sourceBitmap, Point clickPoint)
+            {
+                previewBitmap = sourceBitmap;
+                FormBorderStyle = FormBorderStyle.FixedToolWindow;
+                StartPosition = FormStartPosition.Manual;
+                ShowInTaskbar = false;
+                TopMost = true;
+                Text = "Capture 10x10";
+                ClientSize = new Size(120, 120);
+
+                int offset = 16;
+                Rectangle virtualScreen = SystemInformation.VirtualScreen;
+                int x = Math.Clamp(clickPoint.X + offset, virtualScreen.Left, virtualScreen.Right - Width);
+                int y = Math.Clamp(clickPoint.Y + offset, virtualScreen.Top, virtualScreen.Bottom - Height);
+                Location = new Point(x, y);
+
+                closeTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+                closeTimer.Tick += (_, _) => Close();
+                closeTimer.Start();
+
+                FormClosed += (_, _) =>
+                {
+                    closeTimer.Dispose();
+                    previewBitmap.Dispose();
+                };
+            }
+
+            protected override bool ShowWithoutActivation => true;
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                e.Graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                e.Graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                e.Graphics.Clear(Color.FromArgb(24, 24, 24));
+
+                Rectangle targetRect = new(10, 10, ClientSize.Width - 20, ClientSize.Height - 20);
+                e.Graphics.DrawImage(previewBitmap, targetRect);
+                using Pen border = new(Color.White);
+                e.Graphics.DrawRectangle(border, targetRect);
             }
         }
 

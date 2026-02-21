@@ -28,9 +28,13 @@ namespace AnyIndicator
         private const int ULW_ALPHA = 0x00000002;
         private const byte AC_SRC_OVER = 0x00;
         private const byte AC_SRC_ALPHA = 0x01;
+        private const int VK_LBUTTON = 0x01;
+        private const int CaptureSize = 10;
+        private const int CaptureDelayMs = 2000;
+        private const int CompareIntervalMs = 120;
 
         private readonly System.Windows.Forms.Timer blinkTimer;
-        private readonly System.Windows.Forms.Timer followTimer;
+        private readonly System.Windows.Forms.Timer monitorTimer;
         private readonly NotifyIcon trayIcon;
         private readonly ContextMenuStrip trayMenu;
         private readonly ToolStripMenuItem blueMenuItem;
@@ -41,9 +45,18 @@ namespace AnyIndicator
         private readonly ToolStripMenuItem normalSpeedMenuItem;
         private readonly ToolStripMenuItem fastSpeedMenuItem;
         private bool isLedOn = true;
+        private bool showLed;
+        private bool isCaptureMode;
+        private bool isCapturePending;
+        private bool lastLeftButtonDown;
         private Point ledScreenCenter;
         private LedPalette currentPalette = LedPalette.Blue;
         private BlinkSpeedPreset currentBlinkSpeed = BlinkSpeedPreset.Normal;
+        private Point watchedScreenPoint;
+        private Point pendingCapturePoint;
+        private Bitmap? baselineCapture;
+        private long lastCompareTickMs;
+        private long pendingCaptureDueMs;
 
         public Form1()
         {
@@ -63,11 +76,11 @@ namespace AnyIndicator
             };
             blinkTimer.Tick += BlinkTimer_Tick;
 
-            followTimer = new System.Windows.Forms.Timer
+            monitorTimer = new System.Windows.Forms.Timer
             {
                 Interval = 10
             };
-            followTimer.Tick += FollowTimer_Tick;
+            monitorTimer.Tick += MonitorTimer_Tick;
 
             trayMenu = new ContextMenuStrip();
             blueMenuItem = new ToolStripMenuItem("青", null, (_, _) => SetLedPalette(LedPalette.Blue));
@@ -89,6 +102,7 @@ namespace AnyIndicator
             speedMenuItem.DropDownItems.Add(fastSpeedMenuItem);
             trayMenu.Items.Add(speedMenuItem);
             trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add("キャプチャ", null, (_, _) => StartCaptureMode());
             trayMenu.Items.Add("終了", null, (_, _) => Application.Exit());
 
             trayIcon = new NotifyIcon
@@ -104,17 +118,18 @@ namespace AnyIndicator
             Shown += (_, _) =>
             {
                 blinkTimer.Start();
-                followTimer.Start();
+                monitorTimer.Start();
                 RenderLedOverlay();
             };
 
             FormClosed += (_, _) =>
             {
                 blinkTimer.Dispose();
-                followTimer.Dispose();
+                monitorTimer.Dispose();
                 trayIcon.Visible = false;
                 trayIcon.Dispose();
                 trayMenu.Dispose();
+                baselineCapture?.Dispose();
             };
         }
 
@@ -144,17 +159,137 @@ namespace AnyIndicator
         private void BlinkTimer_Tick(object? sender, EventArgs e)
         {
             isLedOn = !isLedOn;
-            RenderLedOverlay();
+            if (showLed)
+            {
+                RenderLedOverlay();
+            }
         }
 
-        private void FollowTimer_Tick(object? sender, EventArgs e)
+        private void MonitorTimer_Tick(object? sender, EventArgs e)
         {
             Point cursorPos = Cursor.Position;
-            if (cursorPos != ledScreenCenter)
+            bool isLeftButtonDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+
+            if (isCaptureMode && isLeftButtonDown && !lastLeftButtonDown)
+            {
+                isCaptureMode = false;
+                isCapturePending = true;
+                pendingCapturePoint = cursorPos;
+                pendingCaptureDueMs = Environment.TickCount64 + CaptureDelayMs;
+                trayIcon.ShowBalloonTip(1200, "キャプチャ待機", "2秒後に基準画像を保存します。", ToolTipIcon.Info);
+            }
+
+            lastLeftButtonDown = isLeftButtonDown;
+
+            long nowMs = Environment.TickCount64;
+            if (isCapturePending && nowMs >= pendingCaptureDueMs)
+            {
+                SaveBaselineCapture(pendingCapturePoint);
+                isCapturePending = false;
+                trayIcon.ShowBalloonTip(1000, "キャプチャ完了", "監視を開始しました。", ToolTipIcon.Info);
+            }
+
+            if (baselineCapture is null || isCaptureMode || isCapturePending)
+            {
+                return;
+            }
+
+            if (nowMs - lastCompareTickMs < CompareIntervalMs)
+            {
+                if (showLed && cursorPos != ledScreenCenter)
+                {
+                    ledScreenCenter = cursorPos;
+                    RenderLedOverlay();
+                }
+                return;
+            }
+
+            lastCompareTickMs = nowMs;
+            bool changed = HasScreenChanged();
+            if (changed != showLed)
+            {
+                showLed = changed;
+                if (showLed)
+                {
+                    ledScreenCenter = cursorPos;
+                }
+                RenderLedOverlay();
+                return;
+            }
+
+            if (showLed && cursorPos != ledScreenCenter)
             {
                 ledScreenCenter = cursorPos;
                 RenderLedOverlay();
             }
+        }
+
+        private void StartCaptureMode()
+        {
+            isCaptureMode = true;
+            isCapturePending = false;
+            showLed = false;
+            RenderLedOverlay();
+            trayIcon.ShowBalloonTip(1500, "キャプチャモード", "監視したい場所を左クリックしてください（2秒後に保存）。", ToolTipIcon.Info);
+        }
+
+        private void SaveBaselineCapture(Point clickPoint)
+        {
+            baselineCapture?.Dispose();
+            baselineCapture = CaptureAreaAround(clickPoint);
+            watchedScreenPoint = clickPoint;
+            showLed = false;
+            RenderLedOverlay();
+        }
+
+        private bool HasScreenChanged()
+        {
+            if (baselineCapture is null)
+            {
+                return false;
+            }
+
+            using Bitmap current = CaptureAreaAround(watchedScreenPoint);
+            return !AreBitmapsEqual(baselineCapture, current);
+        }
+
+        private static bool AreBitmapsEqual(Bitmap first, Bitmap second)
+        {
+            if (first.Width != second.Width || first.Height != second.Height)
+            {
+                return false;
+            }
+
+            for (int y = 0; y < first.Height; y++)
+            {
+                for (int x = 0; x < first.Width; x++)
+                {
+                    if (first.GetPixel(x, y).ToArgb() != second.GetPixel(x, y).ToArgb())
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static Bitmap CaptureAreaAround(Point center)
+        {
+            Rectangle virtualScreen = SystemInformation.VirtualScreen;
+            int left = center.X - (CaptureSize / 2);
+            int top = center.Y - (CaptureSize / 2);
+
+            left = Math.Clamp(left, virtualScreen.Left, virtualScreen.Right - CaptureSize);
+            top = Math.Clamp(top, virtualScreen.Top, virtualScreen.Bottom - CaptureSize);
+
+            using Bitmap source = new(CaptureSize, CaptureSize, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(source))
+            {
+                g.CopyFromScreen(left, top, 0, 0, new Size(CaptureSize, CaptureSize), CopyPixelOperation.SourceCopy);
+            }
+
+            return (Bitmap)source.Clone();
         }
 
         private void SetLedPalette(LedPalette palette)
@@ -191,6 +326,14 @@ namespace AnyIndicator
         {
             if (!IsHandleCreated)
             {
+                return;
+            }
+
+            if (!showLed)
+            {
+                using Bitmap hidden = new(1, 1, PixelFormat.Format32bppArgb);
+                hidden.SetPixel(0, 0, Color.Transparent);
+                UpdateLayeredBitmap(hidden, new Point(-32000, -32000));
                 return;
             }
 
@@ -367,5 +510,8 @@ namespace AnyIndicator
 
         [DllImport("gdi32.dll", SetLastError = true)]
         private static extern bool DeleteObject(IntPtr ho);
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
     }
 }
